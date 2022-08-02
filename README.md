@@ -15,7 +15,7 @@ Features
 The example demonstrates how:
 
 * Create an Aiven for Apache Kafka® and Aiven for Apache Flink® services. This step is strictly not necessary you can use any Apache Kafka and Apache Flink instance. The anomaly detection SQL queries will work over any Apache Flink® 1.14+ version.
-* Create a Fake Pizza streaming data generator using docker
+* [Create a Fake Pizza streaming data generator using docker](demo.md#Start_streaming_pizzas)
 * Create an Apache Flink SQL job for basic filtering
 * Create an Apache Flink SQL job for basic aggregation
 * Create an Apache Flink SQL job for window aggregation

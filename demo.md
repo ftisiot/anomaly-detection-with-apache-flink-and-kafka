@@ -174,6 +174,66 @@ We can check the results with `kcat`
 kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_agg -u | jq -c
 ```
 
+Create windows
+--------------
+
+We might want to check orders over time and flag only if certain thresholds have been met, let's create the target table
+
+```
+avn service flink table create demo-flink \
+    """{
+        \"name\":\"pizza_orders_agg_window\",
+        \"integration_id\": \"$KAFKA_FLINK_SI\",
+        \"upsert_kafka\": {
+            \"key_format\": \"json\",
+            \"topic\": \"pizza_stream_out_agg_windows\",
+            \"value_fields_include\": \"ALL\",
+            \"value_format\": \"json\"
+        },
+        \"schema_sql\":\"window_time TIMESTAMP(3), window_start TIMESTAMP(3), window_end TIMESTAMP(3), topping VARCHAR, nr_orders BIGINT, PRIMARY KEY(topping, window_start, window_end) NOT ENFORCED\"    
+    }"""
+```
+
+SQL for the transformation, check the usage of the `TUMBLE` function
+
+
+```
+TABLE_IN_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders").table_id')
+TABLE_FILTER_OUT_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders_agg_window").table_id')
+avn service flink job create demo-flink my_first_agg \
+    --table-ids $TABLE_IN_ID $TABLE_FILTER_OUT_ID \
+    --statement """
+        insert into pizza_orders_agg_window
+        with raw_data as (
+            select orderTimestamp,
+                id,
+                c.topping
+            from pizza_orders
+                cross join UNNEST(pizzas) b
+                cross join UNNEST(b.additionalToppings) as c(topping)
+            )
+        SELECT window_time,
+            window_start,
+            window_end,
+            topping,
+            count(*) nr_orders
+        FROM TABLE(TUMBLE(TABLE raw_data, DESCRIPTOR(orderTimestamp), interval '5' seconds))
+        where topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
+        group by window_time,
+            topping,
+            window_start,
+            window_end
+        having count(*) > 10
+        """
+```
+
+Check with kcat
+
+```
+kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_agg_windows -u | jq -c
+```
+
+
 Check for trends
 ----------------
 
@@ -204,23 +264,27 @@ avn service flink job create demo-flink my_first_agg \
     --table-ids $TABLE_IN_ID $TABLE_FILTER_OUT_ID \
     --statement """
         insert into pizza_orders_trends
-        WITH base_data as (
-            SELECT window_time,
+        with raw_data as (
+            select orderTimestamp,
+                id,
+                c.topping
+            from pizza_orders
+                cross join UNNEST(pizzas) b
+                cross join UNNEST(b.additionalToppings) as c(topping)
+            )
+        , windowing as
+            (SELECT window_time,
                 window_start,
                 window_end,
                 topping,
                 count(*) nr_orders
-            FROM TABLE(TUMBLE(TABLE pizza_orders, DESCRIPTOR(orderTimestamp), interval '5' seconds))
-                cross join UNNEST(pizzas) b
-                cross join UNNEST(b.additionalToppings) as c(topping)
-            where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
+            FROM TABLE(TUMBLE(TABLE raw_data, DESCRIPTOR(orderTimestamp), interval '5' seconds))
+            where topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
             group by window_time,
                 topping,
                 window_start,
-                window_end
-
-            )
-        select * from base_data
+                window_end)
+        select * from windowing
         MATCH_RECOGNIZE (
             PARTITION BY topping
             ORDER BY window_time

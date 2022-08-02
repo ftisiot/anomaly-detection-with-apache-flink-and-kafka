@@ -29,7 +29,7 @@ To be able to run the scripts you need:
 * The [Aiven CLI](https://developer.aiven.io/docs/tools/cli.html) installed and an [Aiven valid login token](https://console.aiven.io/signup)
 * Docker installed
 
-The complete set of steps is available in the [demo.md](demo-md) file.
+The complete set of steps is available in the [demo.md](demo.md) file.
 
 License
 ============

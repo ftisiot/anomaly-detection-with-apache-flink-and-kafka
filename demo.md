@@ -47,7 +47,7 @@ You need to copy the `env.conf.sample` within the `fake-data-producer-for-apache
 ```
 cd fake-data-producer-for-apache-kafka-docker/
 docker build -t fake-data-producer-for-apache-kafka-docker .
-docker run fake-data-producer-for-apache-kafka-docker
+docker run -it fake-data-producer-for-apache-kafka-docker
 ```
 
 If everything works correctly we should see the flow of pizza orders being generated
@@ -55,31 +55,108 @@ If everything works correctly we should see the flow of pizza orders being gener
 ![Flow of orders](img/flow_orders.gif)
 
 
-Create the Apache Flink® Source Table
--------------------------------------
+Retrieve the Flink-Kafka integration ID
+---------------------------------------
 
-To be able to analyze incoming pizza orders, we need to create a table on top of the Apache Kafka stream, with the following Aiven client commands.
+To be able to define flink pipelines we need to retrieve the ID of the integration between Apache Kafka and Apache Flink with:
 
-```
+```bash
 KAFKA_FLINK_SI=$(avn service integration-list --json demo-kafka | jq -r '.[] | select(.dest == "demo-flink").service_integration_id')
-avn service flink table create demo-flink \
-    """{
-        \"name\":\"pizza_orders\",
-        \"integration_id\": \"$KAFKA_FLINK_SI\",
-        \"kafka\": {
-            \"scan_startup_mode\": \"earliest-offset\",
-            \"topic\": \"pizza_stream_in\",
-            \"value_fields_include\": \"ALL\",
-            \"value_format\": \"json\"
-        },
-        \"schema_sql\":\"id INT, shop VARCHAR, name VARCHAR, phoneNumber VARCHAR, address VARCHAR, pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND\"    
-    }"""
+```
+
+To make the following calls easier to run, assign to the variable `PROJECT` the name of your project with:
+
+```bash
+PROJECT=my_aiven_project_name
 ```
 
 Apply basic filtering
 ---------------------
 
-The first anomaly will be to spot all occurrences of  `🍍 pineapple`, `🍓 strawberry` and `🍌 banana` and redirect them to a specific topic, we can do so by first creating the table over the target topic with:
+The first anomaly will be to spot all occurrences of  `🍍 pineapple`, `🍓 strawberry` and `🍌 banana` and redirect them to a specific topic, we can do so by:
+
+1. Creating an application named `BasicFiltering` with
+
+```bash
+avn service flink create-application demo-flink \
+    --project $PROJECT \
+    "{\"name\":\"BasicFiltering\"}"
+```
+2. Retrieve the application id with:
+
+```bash
+APP_ID=$(avn service flink list-applications demo-flink   \
+    --project $PROJECT | jq -r '.applications[] | select(.name == "BasicFiltering").id')
+```
+
+3. Replace the integration ids in the Application definition file named `01-basic-filtering.json`
+
+
+```bash
+mkdir -p tmp
+sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/01-basic-filtering.json' > tmp/01-basic-filtering.json
+```
+4. Creating the Apache Flink application filtering the data with:
+
+```bash
+avn service flink create-application-version demo-flink   \
+    --project $PROJECT                                    \
+    --application-id $APP_ID                              \
+    @tmp/01-basic-filtering.json 
+```
+
+The `flink-app/01-basic-filtering.json` contains:
+
+* A source table definition, pointing to the `pizzas` topic:
+
+```sql
+CREATE TABLE pizza_source (
+    id INT, 
+    shop VARCHAR, 
+    name VARCHAR, 
+    phoneNumber VARCHAR, 
+    address VARCHAR, 
+    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND
+) WITH (
+    'connector' = 'kafka',
+    'properties.bootstrap.servers' = '',
+    'scan.startup.mode' = 'earliest-offset',
+    'topic' = 'pizzas',
+    'value.format' = 'json'
+)
+```
+
+* A target table application, pointing to a new Kafka topic named `pizza_stream_out_filter`:
+
+```bash
+CREATE TABLE pizza_filtered (
+    id INT, 
+    name VARCHAR, 
+    topping VARCHAR, 
+    orderTimestamp TIMESTAMP(3)
+) WITH (
+    'connector' = 'kafka',
+    'properties.bootstrap.servers' = '',
+    'scan.startup.mode' = 'earliest-offset',
+    'topic' = 'pizza_stream_out_filter',
+    'value.format' = 'json'
+)
+```
+
+* The Filtering transformation logic:
+
+```
+insert into pizza_filtered
+select
+    id,
+    name,
+    c.topping,
+    orderTimestamp
+from pizza_source
+cross join UNNEST(pizzas) b
+cross join UNNEST(b.additionalToppings) as c(topping)
+where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
+```
 
 ```
 avn service flink table create demo-flink \
@@ -117,9 +194,47 @@ avn service flink job create demo-flink my_first_filter \
         """
 ```
 
-We can verify the presence of data in the target topic using kcat (after properly setting the `kcat.config` file as per [dedicated documentation](https://developer.aiven.io/docs/products/kafka/howto/kcat.html))
+**Run the application**
 
+We can run the application by following the steps below:
+
+1. Retrieve the Application version id you want to run, e.g. for the version `1`` of the `BasicFiltering` application:
+
+```bash
+APP_VERSION_1=$(avn service flink get-application demo-flink \
+    --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 ```
+2. Create a deployment and store its id in the `DEPLOYMENT_ID` variable
+
+```bash
+avn service flink create-application-deployment  demo-flink   \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
+```
+
+3. Retrieve the deployment id with:
+
+```bash
+APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+  --project $PROJECT                                                             \
+  --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
+```
+
+4. Retrieve the deployment status
+
+```bash
+avn service flink get-application-deployment demo-flink       \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  --deployment-id $APP_DEPLOYMENT | jq '.status'
+```
+
+The app should be in `RUNNING` state
+
+We can verify the presence of data in the target `pizza_stream_out_filter` topic using kcat (after properly setting the `kcat.config` file as per [dedicated documentation](https://developer.aiven.io/docs/products/kafka/howto/kcat.html))
+
+```bash
 kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_filter
 ```
 
@@ -127,88 +242,224 @@ Aggregating data
 ----------------
 
 What if we want to flag only orders having more than 3 prohibited toppings? 
-Again let's create the target Flink Table with:
+
+
+1. Creating an application named `Aggregating` with
+
+```bash
+avn service flink create-application demo-flink \
+    --project $PROJECT \
+    "{\"name\":\"Aggregating\"}"
+```
+2. Retrieve the application id with:
+
+```bash
+APP_ID=$(avn service flink list-applications demo-flink   \
+    --project $PROJECT | jq -r '.applications[] | select(.name == "Aggregating").id')
+```
+
+3. Replace the integration ids in the Application definition file named `02-aggregating.json`
+
+
+```bash
+mkdir -p tmp
+sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/02-aggregating.json' > tmp/02-aggregating.json
+```
+4. Creating the Apache Flink application filtering the data with:
+
+```bash
+avn service flink create-application-version demo-flink   \
+    --project $PROJECT                                    \
+    --application-id $APP_ID                              \
+    @tmp/02-aggregating.json 
+```
+
+The `flink-app/02-aggregating.json` contains:
+
+* A source table definition, pointing to the `pizzas` topic:
+
+```sql
+CREATE TABLE pizza_source (
+    id INT, 
+    shop VARCHAR, 
+    name VARCHAR, 
+    phoneNumber VARCHAR, 
+    address VARCHAR, 
+    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND
+) WITH (
+    'connector' = 'kafka',
+    'properties.bootstrap.servers' = '',
+    'scan.startup.mode' = 'earliest-offset',
+    'topic' = 'pizzas',
+    'value.format' = 'json'
+)
+```
+
+* A target table application, pointing to a new Kafka topic named `pizza_stream_out_agg` with the upsert mode and the order `id` being the primary key:
+
+```bash
+CREATE TABLE pizzas_aggs (
+    id INT PRIMARY KEY, 
+    name VARCHAR, 
+    nr_bad_items BIGINT, 
+    toppings VARCHAR, 
+    orderTimestamp TIMESTAMP(3)
+) WITH (
+   'connector' = 'upsert-kafka',
+   'properties.bootstrap.servers' = '',
+   'topic' = 'pizza_stream_out_agg',
+   'value.format' = 'json',
+   'key.format' = 'json'
+)
+```
+
+* The aggregating transformation logic:
 
 ```
-avn service flink table create demo-flink \
-    """{
-        \"name\":\"pizza_orders_agg\",
-        \"integration_id\": \"$KAFKA_FLINK_SI\",
-        \"upsert_kafka\": {
-            \"key_format\": \"json\",
-            \"topic\": \"pizza_stream_out_agg\",
-            \"value_fields_include\": \"ALL\",
-            \"value_format\": \"json\"
-        },
-        \"schema_sql\":\"id INT PRIMARY KEY, name VARCHAR, nr_bad_items BIGINT, toppings VARCHAR, orderTimestamp TIMESTAMP(3)\"    
-    }"""
-```
-
-And define the SQL transformation job. Check out the `GROUP BY` and `HAVING` sections.
-
-```
-TABLE_IN_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders").table_id')
-TABLE_FILTER_OUT_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders_agg").table_id')
-avn service flink job create demo-flink my_first_agg \
-    --table-ids $TABLE_IN_ID $TABLE_FILTER_OUT_ID \
-    --statement """
-        insert into pizza_orders_agg
+insert into pizzas_aggs
         select
             id,
             name,
             count(*) nr_bad_items,
             LISTAGG(c.topping) list_bad_items,
             orderTimestamp           
-        from pizza_orders
+        from pizza_source
         cross join UNNEST(pizzas) b
         cross join UNNEST(b.additionalToppings) as c(topping)
         where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
         group by id, name, orderTimestamp
         having count(*) > 3
-        """
 ```
 
-We can check the results with `kcat`
+**Run the application**
 
+We can run the application by following the steps below:
+
+1. Retrieve the Application version id you want to run, e.g. for the version `1`` of the `BasicFiltering` application:
+
+```bash
+APP_VERSION_1=$(avn service flink get-application demo-flink \
+    --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 ```
-kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_agg -u | jq -c
+2. Create a deployment and store its id in the `DEPLOYMENT_ID` variable
+
+```bash
+avn service flink create-application-deployment  demo-flink   \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
+```
+
+3. Retrieve the deployment id with:
+
+```bash
+APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+  --project $PROJECT                                                             \
+  --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
+```
+
+4. Retrieve the deployment status
+
+```bash
+avn service flink get-application-deployment demo-flink       \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  --deployment-id $APP_DEPLOYMENT | jq '.status'
+```
+
+The app should be in `RUNNING` state
+
+We can verify the presence of data in the target `pizza_stream_out_agg` topic using kcat (after properly setting the `kcat.config` file as per [dedicated documentation](https://developer.aiven.io/docs/products/kafka/howto/kcat.html))
+
+```bash
+kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_agg
 ```
 
 Create windows
 --------------
 
-We might want to check orders over time and flag only if certain thresholds have been met, let's create the target table
+We might want to check orders over time and flag only if certain thresholds have been met over a precise time window.
+
+
+1. Creating an application named `Windowing` with
+
+```bash
+avn service flink create-application demo-flink \
+    --project $PROJECT \
+    "{\"name\":\"Windowing\"}"
+```
+2. Retrieve the application id with:
+
+```bash
+APP_ID=$(avn service flink list-applications demo-flink   \
+    --project $PROJECT | jq -r '.applications[] | select(.name == "Windowing").id')
+```
+
+3. Replace the integration ids in the Application definition file named `03-windowing.json`
+
+
+```bash
+mkdir -p tmp
+sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/03-windowing.json' > tmp/03-windowing.json
+```
+4. Creating the Apache Flink application filtering the data with:
+
+```bash
+avn service flink create-application-version demo-flink   \
+    --project $PROJECT                                    \
+    --application-id $APP_ID                              \
+    @tmp/03-windowing.json 
+```
+
+The `flink-app/03-windowing.json` contains:
+
+* A source table definition, pointing to the `pizzas` topic:
+
+```sql
+CREATE TABLE pizza_source (
+    id INT, 
+    shop VARCHAR, 
+    name VARCHAR, 
+    phoneNumber VARCHAR, 
+    address VARCHAR, 
+    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND
+) WITH (
+    'connector' = 'kafka',
+    'properties.bootstrap.servers' = '',
+    'scan.startup.mode' = 'earliest-offset',
+    'topic' = 'pizzas',
+    'value.format' = 'json'
+)
+```
+
+* A target table application, pointing to a new Kafka topic named `pizza_stream_out_agg_windows` with the upsert mode and the order `topping`, `window_start`, and `window_end` being the primary key:
+
+```bash
+CREATE TABLE pizza_windows (
+    window_time TIMESTAMP(3), 
+    window_start TIMESTAMP(3), 
+    window_end TIMESTAMP(3), 
+    topping VARCHAR, 
+    nr_orders BIGINT, 
+    PRIMARY KEY(topping, window_start, window_end) NOT ENFORCED
+) WITH (
+   'connector' = 'upsert-kafka',
+   'properties.bootstrap.servers' = '',
+   'topic' = 'pizza_stream_out_agg_windows',
+   'value.format' = 'json',
+   'key.format' = 'json'
+)
+```
+
+* The aggregating transformation logic:
 
 ```
-avn service flink table create demo-flink \
-    """{
-        \"name\":\"pizza_orders_agg_window\",
-        \"integration_id\": \"$KAFKA_FLINK_SI\",
-        \"upsert_kafka\": {
-            \"key_format\": \"json\",
-            \"topic\": \"pizza_stream_out_agg_windows\",
-            \"value_fields_include\": \"ALL\",
-            \"value_format\": \"json\"
-        },
-        \"schema_sql\":\"window_time TIMESTAMP(3), window_start TIMESTAMP(3), window_end TIMESTAMP(3), topping VARCHAR, nr_orders BIGINT, PRIMARY KEY(topping, window_start, window_end) NOT ENFORCED\"    
-    }"""
-```
-
-SQL for the transformation, check the usage of the `TUMBLE` function
-
-
-```
-TABLE_IN_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders").table_id')
-TABLE_FILTER_OUT_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders_agg_window").table_id')
-avn service flink job create demo-flink my_first_agg \
-    --table-ids $TABLE_IN_ID $TABLE_FILTER_OUT_ID \
-    --statement """
-        insert into pizza_orders_agg_window
+insert into pizza_windows
         with raw_data as (
             select orderTimestamp,
                 id,
                 c.topping
-            from pizza_orders
+            from pizza_source
                 cross join UNNEST(pizzas) b
                 cross join UNNEST(b.additionalToppings) as c(topping)
             )
@@ -224,12 +475,49 @@ avn service flink job create demo-flink my_first_agg \
             window_start,
             window_end
         having count(*) > 10
-        """
 ```
 
-Check with kcat
+**Run the application**
 
+We can run the application by following the steps below:
+
+1. Retrieve the Application version id you want to run, e.g. for the version `1`` of the `BasicFiltering` application:
+
+```bash
+APP_VERSION_1=$(avn service flink get-application demo-flink \
+    --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 ```
+2. Create a deployment and store its id in the `DEPLOYMENT_ID` variable
+
+```bash
+avn service flink create-application-deployment  demo-flink   \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
+```
+
+3. Retrieve the deployment id with:
+
+```bash
+APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+  --project $PROJECT                                                             \
+  --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
+```
+
+4. Retrieve the deployment status
+
+```bash
+avn service flink get-application-deployment demo-flink       \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  --deployment-id $APP_DEPLOYMENT | jq '.status'
+```
+
+The app should be in `RUNNING` state
+
+We can verify the presence of data in the target `pizza_stream_out_agg_windows` topic using kcat (after properly setting the `kcat.config` file as per [dedicated documentation](https://developer.aiven.io/docs/products/kafka/howto/kcat.html))
+
+```bash
 kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_agg_windows -u | jq -c
 ```
 
@@ -237,38 +525,86 @@ kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_agg_windows -u | jq -
 Check for trends
 ----------------
 
-The last anomaly is to check for particular trends, using the `MATCH_RECOGNIZE` function. Let's create the table
+The last anomaly is to check for particular trends, using the `MATCH_RECOGNIZE` function. Let's create the table.
 
+
+1. Creating an application named `Trends` with
+
+```bash
+avn service flink create-application demo-flink \
+    --project $PROJECT \
+    "{\"name\":\"Trends\"}"
 ```
-avn service flink table create demo-flink \
-    """{
-        \"name\":\"pizza_orders_trends\",
-        \"integration_id\": \"$KAFKA_FLINK_SI\",
-        \"upsert_kafka\": {
-            \"key_format\": \"json\",
-            \"topic\": \"pizza_stream_out_trends\",
-            \"value_fields_include\": \"ALL\",
-            \"value_format\": \"json\"
-        },
-        \"schema_sql\":\"topping VARCHAR, trend_start TIMESTAMP(3), trend_detail VARCHAR, PRIMARY KEY(topping, trend_start) NOT ENFORCED\"    
-    }"""
+2. Retrieve the application id with:
+
+```bash
+APP_ID=$(avn service flink list-applications demo-flink   \
+    --project $PROJECT | jq -r '.applications[] | select(.name == "Trends").id')
 ```
 
-And the SQL to recognize a trend where the number of orders containing a specific topping:
-1. increases for one or more 5-seconds window
-2. decreases for exactly two 5-seconds window
+3. Replace the integration ids in the Application definition file named `04-trends.json`
 
+
+```bash
+mkdir -p tmp
+sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/04-trends.json' > tmp/04-trends.json
 ```
-TABLE_FILTER_OUT_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders_trends").table_id')
-avn service flink job create demo-flink my_first_agg \
-    --table-ids $TABLE_IN_ID $TABLE_FILTER_OUT_ID \
-    --statement """
-        insert into pizza_orders_trends
+4. Creating the Apache Flink application filtering the data with:
+
+```bash
+avn service flink create-application-version demo-flink   \
+    --project $PROJECT                                    \
+    --application-id $APP_ID                              \
+    @tmp/04-trends.json 
+```
+
+The `flink-app/04-trends.json` contains:
+
+* A source table definition, pointing to the `pizzas` topic:
+
+```sql
+CREATE TABLE pizza_source (
+    id INT, 
+    shop VARCHAR, 
+    name VARCHAR, 
+    phoneNumber VARCHAR, 
+    address VARCHAR, 
+    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND
+) WITH (
+    'connector' = 'kafka',
+    'properties.bootstrap.servers' = '',
+    'scan.startup.mode' = 'earliest-offset',
+    'topic' = 'pizzas',
+    'value.format' = 'json'
+)
+```
+
+* A target table application, pointing to a new Kafka topic named `pizza_stream_out_trends` with the upsert mode and the order `topping` and `trend_start` being the primary key:
+
+```bash
+CREATE TABLE pizza_orders_trend (
+    topping VARCHAR, 
+    trend_start TIMESTAMP(3), 
+    trend_detail VARCHAR, 
+    PRIMARY KEY(topping, trend_start) NOT ENFORCED
+) WITH (
+   'connector' = 'upsert-kafka',
+   'properties.bootstrap.servers' = 'pizza_stream_out_trends',
+   'topic' = 'pizza_stream_out_trends',
+   'value.format' = 'json',
+   'key.format' = 'json'
+)
+```
+
+* The aggregating transformation logic using Apache Flink `MATCH_RECOGNIZE` function:
+
+```sql
+insert into pizza_orders_trend
         with raw_data as (
             select orderTimestamp,
                 id,
                 c.topping
-            from pizza_orders
+            from pizza_source
                 cross join UNNEST(pizzas) b
                 cross join UNNEST(b.additionalToppings) as c(topping)
             )
@@ -303,9 +639,51 @@ avn service flink job create demo-flink my_first_agg \
                     NR_DOWN.nr_orders < LAST(NR_DOWN.nr_orders, 1)
 
             )
-            """
 ```
 
+**Run the application**
+
+We can run the application by following the steps below:
+
+1. Retrieve the Application version id you want to run, e.g. for the version `1`` of the `BasicFiltering` application:
+
+```bash
+APP_VERSION_1=$(avn service flink get-application demo-flink \
+    --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
+```
+2. Create a deployment and store its id in the `DEPLOYMENT_ID` variable
+
+```bash
+avn service flink create-application-deployment  demo-flink   \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
+```
+
+3. Retrieve the deployment id with:
+
+```bash
+APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+  --project $PROJECT                                                             \
+  --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
+```
+
+4. Retrieve the deployment status
+
+```bash
+avn service flink get-application-deployment demo-flink       \
+  --project $PROJECT                                          \
+  --application-id $APP_ID                                    \
+  --deployment-id $APP_DEPLOYMENT | jq '.status'
+```
+
+The app should be in `RUNNING` state
+
+We can verify the presence of data in the target `pizza_stream_out_trends` topic using kcat (after properly setting the `kcat.config` file as per [dedicated documentation](https://developer.aiven.io/docs/products/kafka/howto/kcat.html))
+
+```bash
+kcat -F $PINEAPPLE_PATH/kcat.config -C -t pizza_stream_out_trends -u | jq -c
+```
 
 
 Delete services

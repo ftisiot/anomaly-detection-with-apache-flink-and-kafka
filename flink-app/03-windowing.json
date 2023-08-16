@@ -1,0 +1,15 @@
+{
+    "sources": [
+        {
+            "create_table": "CREATE TABLE pizza_source (\n    id INT, \n    shop VARCHAR, \n    name VARCHAR, \n    phoneNumber VARCHAR, \n    address VARCHAR, \n    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND\n) WITH (\n    'connector' = 'kafka',\n    'properties.bootstrap.servers' = '',\n    'scan.startup.mode' = 'earliest-offset',\n    'topic' = 'pizzas',\n    'value.format' = 'json'\n)",
+            "integration_id": "KAFKA_INTEGRATION_ID"
+        }
+    ],
+    "sinks": [
+        {
+            "create_table": "CREATE TABLE pizza_windows (\n    window_time TIMESTAMP(3), \n    window_start TIMESTAMP(3), \n    window_end TIMESTAMP(3), \n    topping VARCHAR, \n    nr_orders BIGINT, \n    PRIMARY KEY(topping, window_start, window_end) NOT ENFORCED\n) WITH (\n   'connector' = 'upsert-kafka',\n   'properties.bootstrap.servers' = '',\n   'topic' = 'pizza_stream_out_agg_windows',\n   'value.format' = 'json',\n   'key.format' = 'json'\n)",
+            "integration_id": "KAFKA_INTEGRATION_ID"
+        }
+    ],
+    "statement": "insert into pizza_windows\n        with raw_data as (\n            select orderTimestamp,\n                id,\n                c.topping\n            from pizza_source\n                cross join UNNEST(pizzas) b\n                cross join UNNEST(b.additionalToppings) as c(topping)\n            )\n        SELECT window_time,\n            window_start,\n            window_end,\n            topping,\n            count(*) nr_orders\n        FROM TABLE(TUMBLE(TABLE raw_data, DESCRIPTOR(orderTimestamp), interval '5' seconds))\n        where topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')\n        group by window_time,\n            topping,\n            window_start,\n            window_end\n        having count(*) > 10"
+}

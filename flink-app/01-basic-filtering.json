@@ -1,0 +1,15 @@
+{
+    "sources": [
+        {
+            "create_table": "CREATE TABLE pizza_source (\n    id INT, \n    shop VARCHAR, \n    name VARCHAR, \n    phoneNumber VARCHAR, \n    address VARCHAR, \n    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND\n) WITH (\n    'connector' = 'kafka',\n    'properties.bootstrap.servers' = '',\n    'scan.startup.mode' = 'earliest-offset',\n    'topic' = 'pizzas',\n    'value.format' = 'json'\n)",
+            "integration_id": "KAFKA_INTEGRATION_ID"
+        }
+    ],
+    "sinks": [
+        {
+            "create_table": "CREATE TABLE pizza_filtered (\n    id INT, \n    name VARCHAR, \n    topping VARCHAR, \n    orderTimestamp TIMESTAMP(3)\n) WITH (\n    'connector' = 'kafka',\n    'properties.bootstrap.servers' = '',\n    'scan.startup.mode' = 'earliest-offset',\n    'topic' = 'pizza_stream_out_filter',\n    'value.format' = 'json'\n)",
+            "integration_id": "KAFKA_INTEGRATION_ID"
+        }
+    ],
+    "statement": "insert into pizza_filtered\nselect\n    id,\n    name,\n    c.topping,\n    orderTimestamp\nfrom pizza_source\ncross join UNNEST(pizzas) b\ncross join UNNEST(b.additionalToppings) as c(topping)\nwhere c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')"
+}

@@ -1,0 +1,15 @@
+{
+    "sources": [
+        {
+            "create_table": "CREATE TABLE pizza_source (\n    id INT, \n    shop VARCHAR, \n    name VARCHAR, \n    phoneNumber VARCHAR, \n    address VARCHAR, \n    pizzas ARRAY <ROW (pizzaName VARCHAR, additionalToppings ARRAY <VARCHAR>)>, orderTimestamp TIMESTAMP(3) METADATA FROM 'timestamp', orderProctime AS PROCTIME(), WATERMARK FOR orderTimestamp AS orderTimestamp - INTERVAL '5' SECOND\n) WITH (\n    'connector' = 'kafka',\n    'properties.bootstrap.servers' = '',\n    'scan.startup.mode' = 'earliest-offset',\n    'topic' = 'pizzas',\n    'value.format' = 'json'\n)",
+            "integration_id": "KAFKA_INTEGRATION_ID"
+        }
+    ],
+    "sinks": [
+        {
+            "create_table": "CREATE TABLE pizzas_aggs (\n    id INT PRIMARY KEY, \n    name VARCHAR, \n    nr_bad_items BIGINT, \n    toppings VARCHAR, \n    orderTimestamp TIMESTAMP(3)\n) WITH (\n   'connector' = 'upsert-kafka',\n   'properties.bootstrap.servers' = '',\n   'topic' = 'pizza_stream_out_agg',\n   'value.format' = 'json',\n   'key.format' = 'json'\n)",
+            "integration_id": "KAFKA_INTEGRATION_ID"
+        }
+    ],
+    "statement": "insert into pizzas_aggs\n        select\n            id,\n            name,\n            count(*) nr_bad_items,\n            LISTAGG(c.topping) list_bad_items,\n            orderTimestamp           \n        from pizza_source\n        cross join UNNEST(pizzas) b\n        cross join UNNEST(b.additionalToppings) as c(topping)\n        where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')\n        group by id, name, orderTimestamp\n        having count(*) > 3"
+}

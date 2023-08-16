@@ -38,5 +38,5 @@ Please note that the project explicitly does not require a CLA (Contributor Lice
 
 Contact
 ============
-Bug reports and patches are very welcome, please post them as GitHub issues and pull requests at https://github.com/aiven/{{PROJECT_NAME}} . 
+Bug reports and patches are very welcome, please post them as GitHub issues and pull requests at https://github.com/aiven/anomaly-detection-with-apache-flink-and-kafka. 
 To report any possible vulnerabilities or other serious issues please see our [security](SECURITY.md) policy.

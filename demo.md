@@ -158,42 +158,6 @@ cross join UNNEST(b.additionalToppings) as c(topping)
 where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
 ```
 
-```
-avn service flink table create demo-flink \
-    """{
-        \"name\":\"pizza_orders_filter\",
-        \"integration_id\": \"$KAFKA_FLINK_SI\",
-        \"kafka\": {
-            \"scan_startup_mode\": \"earliest-offset\",
-            \"topic\": \"pizza_stream_out_filter\",
-            \"value_fields_include\": \"ALL\",
-            \"value_format\": \"json\"
-        },
-        \"schema_sql\":\"id INT, name VARCHAR, topping VARCHAR, orderTimestamp TIMESTAMP(3)\"    
-    }"""
-```
-
-And then creating a Flink job with:
-
-```
-TABLE_IN_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders").table_id')
-TABLE_FILTER_OUT_ID=$(avn service flink table list demo-flink --json | jq -r '.[] | select (.table_name == "pizza_orders_filter").table_id')
-avn service flink job create demo-flink my_first_filter \
-    --table-ids $TABLE_IN_ID $TABLE_FILTER_OUT_ID \
-    --statement """
-        insert into pizza_orders_filter
-        select
-            id,
-            name,
-            c.topping,
-            orderTimestamp
-        from pizza_orders
-        cross join UNNEST(pizzas) b
-        cross join UNNEST(b.additionalToppings) as c(topping)
-        where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
-        """
-```
-
 **Run the application**
 
 We can run the application by following the steps below:

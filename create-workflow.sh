@@ -1,4 +1,9 @@
-# Load parameters
+# This script creates an Aiven for Apache Kafka, an Aiven for Apache Flink and 4 pipelines for anomaly detection
+# REQUIRES 
+# - docker
+# - An Aiven account (with a token generated)
+
+# Load parameters (you need to create a params.conf file as copy of params.conf.sample and fill in the details)
 . ./fakedatagen/params.conf
 
 # Create Kafka

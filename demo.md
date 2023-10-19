@@ -578,7 +578,7 @@ insert into pizza_orders_trend
                 window_end,
                 topping,
                 count(*) nr_orders
-            FROM TABLE(TUMBLE(TABLE raw_data, DESCRIPTOR(orderTimestamp), interval '5' seconds))
+            FROM TABLE(TUMBLE(TABLE raw_data, DESCRIPTOR(orderTimestamp), interval '1' seconds))
             where topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')
             group by window_time,
                 topping,
@@ -593,15 +593,12 @@ insert into pizza_orders_trend
                 LISTAGG(cast(nr_orders as string)) as various_nr_orders
             ONE ROW PER MATCH
             AFTER MATCH SKIP PAST LAST ROW
-            PATTERN (START_ROW NR_UP+ NR_DOWN{2})
+            PATTERN (START_ROW NR_UP NR_DOWN)
             DEFINE
                 NR_UP AS
-                    (LAST(NR_UP.nr_orders, 1) IS NULL AND NR_UP.nr_orders > START_ROW.nr_orders OR
-                    NR_UP.nr_orders > LAST(NR_UP.nr_orders, 1)),
+                     NR_UP.nr_orders > START_ROW.nr_orders,
                 NR_DOWN AS
-                    (LAST(NR_DOWN.nr_orders, 1) IS NULL AND NR_DOWN.nr_orders < LAST(NR_UP.nr_orders, 1)) OR
-                    NR_DOWN.nr_orders < LAST(NR_DOWN.nr_orders, 1)
-
+                    (NR_UP.nr_orders - NR_DOWN.nr_orders)*100.0/NR_UP.nr_orders > 30
             )
 ```
 

@@ -68,10 +68,10 @@ KAFKA_FLINK_SI=$(avn service integration-list --json demo-kafka | jq -r '.[] | s
 # Create the first BasicFiltering application
 avn service flink create-application demo-flink \
     --project $PROJECT \
-    "{\"name\":\"BasicFiltering\"}"
+    "{\"name\":\"ex-1-BasicFiltering\"}"
 
 APP_ID=$(avn service flink list-applications demo-flink   \
-    --project $PROJECT | jq -r '.applications[] | select(.name == "BasicFiltering").id')
+    --project $PROJECT | jq -r '.applications[] | select(.name == "ex-1-BasicFiltering").id')
 
 wait 30
 
@@ -105,10 +105,10 @@ avn service flink get-application-deployment demo-flink       \
 
 avn service flink create-application demo-flink \
     --project $PROJECT \
-    "{\"name\":\"Aggregating\"}"
+    "{\"name\":\"ex-2-Aggregating\"}"
 
 APP_ID=$(avn service flink list-applications demo-flink   \
-    --project $PROJECT | jq -r '.applications[] | select(.name == "Aggregating").id')
+    --project $PROJECT | jq -r '.applications[] | select(.name == "ex-2-Aggregating").id')
 
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/02-aggregating.json' > tmp/02-aggregating.json
@@ -139,10 +139,10 @@ avn service flink get-application-deployment demo-flink       \
 
 avn service flink create-application demo-flink \
     --project $PROJECT \
-    "{\"name\":\"Windowing\"}"
+    "{\"name\":\"ex-3-Windowing\"}"
 
 APP_ID=$(avn service flink list-applications demo-flink   \
-    --project $PROJECT | jq -r '.applications[] | select(.name == "Windowing").id')
+    --project $PROJECT | jq -r '.applications[] | select(.name == "ex-3-Windowing").id')
 
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/03-windowing.json' > tmp/03-windowing.json
@@ -173,10 +173,10 @@ avn service flink get-application-deployment demo-flink       \
 
 avn service flink create-application demo-flink \
     --project $PROJECT \
-    "{\"name\":\"Trends\"}"
+    "{\"name\":\"ex-4-Trends\"}"
 
 APP_ID=$(avn service flink list-applications demo-flink   \
-    --project $PROJECT | jq -r '.applications[] | select(.name == "Trends").id')
+    --project $PROJECT | jq -r '.applications[] | select(.name == "ex-4-Trends").id')
 
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/04-trends.json' > tmp/04-trends.json

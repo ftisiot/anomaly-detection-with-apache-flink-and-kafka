@@ -41,7 +41,7 @@ Once the `./create-workflow.sh` script ends:
             * Click on the **pizza_filtered** to show the target definition pushing the data to a new topic in Kafka named `pizza_stream_out_filter`
             * Click on **Create new version**
             * The `ex-1-BasicFiltering` app only filters orders with a prohibited ingredient (`where c.topping in ('🍍 pineapple', '🍓 strawberry','🍌 banana')`) in it. In the Screen there's a **Run** button you can use to show the data filtered. 
-            ![Basic Filtering](img/basic_filtering.mp4)
+            ![Basic Filtering](img/basic_filtering.gif)
         * Go back to **Applications**
         * Select **ex-2-Aggregating** 
             * This application differs from the previous since it only sends out order with more than 3 prohibited ingredients `having count(*) > 3` show the code and run it

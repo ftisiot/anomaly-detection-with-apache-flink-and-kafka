@@ -7,7 +7,7 @@
 . ./fakedatagen/params.conf
 
 # Create Kafka
-avn service create demo-kafka               \
+avn --auth-token $TOKEN service create demo-kafka               \
     -t kafka                                \
     --cloud google-europe-west3             \
     -p business-4                           \
@@ -17,18 +17,18 @@ avn service create demo-kafka               \
     -c schema_registry=true
 
 # Create Flink
-avn service create demo-flink -t flink --cloud google-europe-west3 -p business-4
+avn --auth-token $TOKEN service create demo-flink -t flink --cloud google-europe-west3 -p business-4
 
 # Create Kafka Flink Integration
-avn service integration-create      \
+avn --auth-token $TOKEN service integration-create      \
     -t flink                        \
     -s demo-kafka                   \
     -d demo-flink
 
 # Wait for the services to be up and running
 
-avn service wait demo-kafka 
-avn service wait demo-flink 
+avn --auth-token $TOKEN service wait demo-kafka 
+avn --auth-token $TOKEN service wait demo-flink 
 
 
 # remove folder if it exists
@@ -40,7 +40,7 @@ git clone https://github.com/aiven/fake-data-producer-for-apache-kafka-docker.gi
 # Navigate into the repository
 cd fake-data-producer-for-apache-kafka-docker/
 # Download the certificates
-avn service user-creds-download demo-kafka --username avnadmin -d certs
+avn --auth-token $TOKEN service user-creds-download demo-kafka --username avnadmin -d certs
 cp ../fakedatagen/env.conf ./conf/env.conf
 
 # Replace placeholders
@@ -63,14 +63,14 @@ cd ..
 
 # Retrieve the integration id
 
-KAFKA_FLINK_SI=$(avn service integration-list --json demo-kafka | jq -r '.[] | select(.dest == "demo-flink").service_integration_id')
+KAFKA_FLINK_SI=$(avn --auth-token $TOKEN service integration-list --json demo-kafka | jq -r '.[] | select(.dest == "demo-flink").service_integration_id')
 
 # Create the first BasicFiltering application
-avn service flink create-application demo-flink \
+avn --auth-token $TOKEN service flink create-application demo-flink \
     --project $PROJECT \
     "{\"name\":\"ex-1-BasicFiltering\"}"
 
-APP_ID=$(avn service flink list-applications demo-flink   \
+APP_ID=$(avn --auth-token $TOKEN service flink list-applications demo-flink   \
     --project $PROJECT | jq -r '.applications[] | select(.name == "ex-1-BasicFiltering").id')
 
 wait 30
@@ -78,127 +78,127 @@ wait 30
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/01-basic-filtering.json' > tmp/01-basic-filtering.json
 
-avn service flink create-application-version demo-flink   \
+avn --auth-token $TOKEN service flink create-application-version demo-flink   \
     --project $PROJECT                                    \
     --application-id $APP_ID                              \
     @tmp/01-basic-filtering.json 
 
-APP_VERSION_1=$(avn service flink get-application demo-flink \
+APP_VERSION_1=$(avn --auth-token $TOKEN service flink get-application demo-flink \
     --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 
-avn service flink create-application-deployment  demo-flink   \
+avn --auth-token $TOKEN service flink create-application-deployment  demo-flink   \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
 
-APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+APP_DEPLOYMENT=$(avn --auth-token $TOKEN service flink list-application-deployments demo-flink       \
   --project $PROJECT                                                             \
   --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
 
 
-avn service flink get-application-deployment demo-flink       \
+avn --auth-token $TOKEN service flink get-application-deployment demo-flink       \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   --deployment-id $APP_DEPLOYMENT | jq '.status'
 
 # Create aggregations
 
-avn service flink create-application demo-flink \
+avn --auth-token $TOKEN service flink create-application demo-flink \
     --project $PROJECT \
     "{\"name\":\"ex-2-Aggregating\"}"
 
-APP_ID=$(avn service flink list-applications demo-flink   \
+APP_ID=$(avn --auth-token $TOKEN service flink list-applications demo-flink   \
     --project $PROJECT | jq -r '.applications[] | select(.name == "ex-2-Aggregating").id')
 
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/02-aggregating.json' > tmp/02-aggregating.json
 
-avn service flink create-application-version demo-flink   \
+avn --auth-token $TOKEN service flink create-application-version demo-flink   \
     --project $PROJECT                                    \
     --application-id $APP_ID                              \
     @tmp/02-aggregating.json 
 
-APP_VERSION_1=$(avn service flink get-application demo-flink \
+APP_VERSION_1=$(avn --auth-token $TOKEN service flink get-application demo-flink \
     --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 
-avn service flink create-application-deployment  demo-flink   \
+avn --auth-token $TOKEN service flink create-application-deployment  demo-flink   \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
 
-APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+APP_DEPLOYMENT=$(avn --auth-token $TOKEN service flink list-application-deployments demo-flink       \
   --project $PROJECT                                                             \
   --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
 
-avn service flink get-application-deployment demo-flink       \
+avn --auth-token $TOKEN service flink get-application-deployment demo-flink       \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   --deployment-id $APP_DEPLOYMENT | jq '.status'
 
 # Create windows
 
-avn service flink create-application demo-flink \
+avn --auth-token $TOKEN service flink create-application demo-flink \
     --project $PROJECT \
     "{\"name\":\"ex-3-Windowing\"}"
 
-APP_ID=$(avn service flink list-applications demo-flink   \
+APP_ID=$(avn --auth-token $TOKEN service flink list-applications demo-flink   \
     --project $PROJECT | jq -r '.applications[] | select(.name == "ex-3-Windowing").id')
 
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/03-windowing.json' > tmp/03-windowing.json
 
-avn service flink create-application-version demo-flink   \
+avn --auth-token $TOKEN service flink create-application-version demo-flink   \
     --project $PROJECT                                    \
     --application-id $APP_ID                              \
     @tmp/03-windowing.json 
 
-APP_VERSION_1=$(avn service flink get-application demo-flink \
+APP_VERSION_1=$(avn --auth-token $TOKEN service flink get-application demo-flink \
     --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 
-avn service flink create-application-deployment  demo-flink   \
+avn --auth-token $TOKEN service flink create-application-deployment  demo-flink   \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
 
-APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+APP_DEPLOYMENT=$(avn --auth-token $TOKEN service flink list-application-deployments demo-flink       \
   --project $PROJECT                                                             \
   --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
 
-avn service flink get-application-deployment demo-flink       \
+avn --auth-token $TOKEN service flink get-application-deployment demo-flink       \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   --deployment-id $APP_DEPLOYMENT | jq '.status'
 
 # Check for trends
 
-avn service flink create-application demo-flink \
+avn --auth-token $TOKEN service flink create-application demo-flink \
     --project $PROJECT \
     "{\"name\":\"ex-4-Trends\"}"
 
-APP_ID=$(avn service flink list-applications demo-flink   \
+APP_ID=$(avn --auth-token $TOKEN service flink list-applications demo-flink   \
     --project $PROJECT | jq -r '.applications[] | select(.name == "ex-4-Trends").id')
 
 mkdir -p tmp
 sed "s/KAFKA_INTEGRATION_ID/$KAFKA_FLINK_SI/" 'flink-app/04-trends.json' > tmp/04-trends.json
 
-avn service flink create-application-version demo-flink   \
+avn --auth-token $TOKEN service flink create-application-version demo-flink   \
     --project $PROJECT                                    \
     --application-id $APP_ID                              \
     @tmp/04-trends.json 
 
-APP_VERSION_1=$(avn service flink get-application demo-flink \
+APP_VERSION_1=$(avn --auth-token $TOKEN service flink get-application demo-flink \
     --project $PROJECT --application-id $APP_ID | jq -r '.application_versions[] | select(.version == 1).id')
 
-avn service flink create-application-deployment  demo-flink   \
+avn --auth-token $TOKEN service flink create-application-deployment  demo-flink   \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   "{\"parallelism\": 1,\"restart_enabled\": true,  \"version_id\": \"$APP_VERSION_1\"}"
 
-APP_DEPLOYMENT=$(avn service flink list-application-deployments demo-flink       \
+APP_DEPLOYMENT=$(avn --auth-token $TOKEN service flink list-application-deployments demo-flink       \
   --project $PROJECT                                                             \
   --application-id $APP_ID | jq  -r ".deployments[] | select(.version_id == \"$APP_VERSION_1\").id")
 
-avn service flink get-application-deployment demo-flink       \
+avn --auth-token $TOKEN service flink get-application-deployment demo-flink       \
   --project $PROJECT                                          \
   --application-id $APP_ID                                    \
   --deployment-id $APP_DEPLOYMENT | jq '.status'
